@@ -2,8 +2,28 @@
 <html>
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
     <title>Starfield Rainbow Comet</title>
+    <style>
+      body {
+        margin: 0;
+        overflow: hidden;
+        background: #000;
+        cursor: crosshair;
+        /* スマホでの意図しないスクロールや選択を防止 */
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      #myCanvas {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+      }
+    </style>
     <script type="importmap">
       {
         "imports": {
@@ -15,30 +35,32 @@
     <script type="module">
       import * as THREE from "three/webgpu";
 
-      const width = window.innerWidth;
-      const height = window.innerHeight;
-
+      // --- 初期化 ---
       const renderer = new THREE.WebGPURenderer({
         canvas: document.querySelector("#myCanvas"),
         antialias: true,
       });
       renderer.setPixelRatio(window.devicePixelRatio);
-      renderer.setSize(width, height);
+      renderer.setSize(window.innerWidth, window.innerHeight);
 
       const scene = new THREE.Scene();
       scene.background = new THREE.Color(0x000005);
 
-      const camera = new THREE.PerspectiveCamera(45, width / height, 1, 3000);
+      const camera = new THREE.PerspectiveCamera(
+        45,
+        window.innerWidth / window.innerHeight,
+        1,
+        3000,
+      );
       camera.position.set(0, 0, 800);
 
-      // --- 1. 星空（背景）の作成 ---
+      // --- 1. 星空（背景） ---
       function createStarfield() {
-        const starCount = 2000; // 星の数
+        const starCount = 2000;
         const geometry = new THREE.BufferGeometry();
         const positions = new Float32Array(starCount * 3);
 
         for (let i = 0; i < starCount; i++) {
-          // 半径1000〜2000の球体状に星を散りばめる
           const r = 1000 + Math.random() * 1000;
           const theta = 2 * Math.PI * Math.random();
           const phi = Math.acos(2 * Math.random() - 1);
@@ -95,20 +117,8 @@
         return { mesh: p, vx, vy, vz, life, initialLife: life };
       }
 
-      // --- 4. マウス操作 ---
-      const targetPos = new THREE.Vector3();
-      window.addEventListener("mousemove", (e) => {
-        const v = new THREE.Vector3(
-          (e.clientX / width) * 2 - 1,
-          -(e.clientY / height) * 2 + 1,
-          0.5,
-        ).unproject(camera);
-        targetPos
-          .copy(camera.position)
-          .add(v.sub(camera.position).normalize().multiplyScalar(600));
-      });
-      window.addEventListener("mousedown", () => {
-        for (let i = 0; i < 100; i++) {
+      function triggerExplosion() {
+        for (let i = 0; i < 80; i++) {
           const p = createParticle(
             ball.position.x,
             ball.position.y,
@@ -118,15 +128,60 @@
           scene.add(p.mesh);
           particles.push(p);
         }
-      });
+      }
 
-      // --- 5. アニメーション ---
+      // --- 4. 操作ロジック（マウス＆タッチ共通） ---
+      const targetPos = new THREE.Vector3(0, 0, 0);
+
+      function updatePosition(clientX, clientY) {
+        const v = new THREE.Vector3(
+          (clientX / window.innerWidth) * 2 - 1,
+          -(clientY / window.innerHeight) * 2 + 1,
+          0.5,
+        ).unproject(camera);
+
+        targetPos
+          .copy(camera.position)
+          .add(v.sub(camera.position).normalize().multiplyScalar(600));
+      }
+
+      // マウスイベント
+      window.addEventListener("mousemove", (e) => {
+        updatePosition(e.clientX, e.clientY);
+      });
+      window.addEventListener("mousedown", triggerExplosion);
+
+      // タッチイベント（スマホ対応）
+      window.addEventListener(
+        "touchstart",
+        (e) => {
+          const touch = e.touches[0];
+          updatePosition(touch.clientX, touch.clientY);
+          triggerExplosion();
+        },
+        { passive: false },
+      );
+
+      window.addEventListener(
+        "touchmove",
+        (e) => {
+          // スクロールを防止
+          if (e.cancelable) e.preventDefault();
+          const touch = e.touches[0];
+          updatePosition(touch.clientX, touch.clientY);
+        },
+        { passive: false },
+      );
+
+      // --- 5. アニメーションループ ---
       renderer.setAnimationLoop(() => {
+        // 彗星をターゲットに滑らかに追従させる
         ball.position.lerp(targetPos, 0.08);
 
-        // 星空をゆっくり回転させて宇宙の広がりを出す
+        // 背景の回転
         starMesh.rotation.y += 0.0005;
 
+        // 常に尾を引くパーティクルを生成
         for (let i = 0; i < 5; i++) {
           const p = createParticle(
             ball.position.x,
@@ -137,6 +192,7 @@
           particles.push(p);
         }
 
+        // パーティクルの更新と破棄
         for (let i = particles.length - 1; i >= 0; i--) {
           const p = particles[i];
           p.life -= 0.015;
@@ -145,8 +201,9 @@
           p.mesh.position.y += p.vy;
           p.mesh.position.z += p.vz;
           p.mesh.material.opacity = p.life / p.initialLife;
-          const s = p.life * 3;
+          const s = Math.max(0.1, p.life * 3);
           p.mesh.scale.set(s, s, s);
+
           if (p.life <= 0) {
             scene.remove(p.mesh);
             p.mesh.geometry.dispose();
@@ -154,19 +211,21 @@
             particles.splice(i, 1);
           }
         }
+
         renderer.render(scene, camera);
       });
 
+      // リサイズ対応（スマホの回転対策）
       window.addEventListener("resize", () => {
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        camera.aspect = window.innerWidth / window.innerHeight;
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        renderer.setSize(w, h);
+        camera.aspect = w / h;
         camera.updateProjectionMatrix();
       });
     </script>
   </head>
-  <body
-    style="margin: 0; overflow: hidden; background: #000; cursor: crosshair"
-  >
+  <body>
     <canvas id="myCanvas"></canvas>
   </body>
 </html>
