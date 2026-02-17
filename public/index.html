@@ -1,0 +1,172 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Starfield Rainbow Comet</title>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.182.0/build/three.webgpu.js",
+          "three/webgpu": "https://cdn.jsdelivr.net/npm/three@0.182.0/build/three.webgpu.js"
+        }
+      }
+    </script>
+    <script type="module">
+      import * as THREE from "three/webgpu";
+
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+
+      const renderer = new THREE.WebGPURenderer({
+        canvas: document.querySelector("#myCanvas"),
+        antialias: true,
+      });
+      renderer.setPixelRatio(window.devicePixelRatio);
+      renderer.setSize(width, height);
+
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x000005);
+
+      const camera = new THREE.PerspectiveCamera(45, width / height, 1, 3000);
+      camera.position.set(0, 0, 800);
+
+      // --- 1. 星空（背景）の作成 ---
+      function createStarfield() {
+        const starCount = 2000; // 星の数
+        const geometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(starCount * 3);
+
+        for (let i = 0; i < starCount; i++) {
+          // 半径1000〜2000の球体状に星を散りばめる
+          const r = 1000 + Math.random() * 1000;
+          const theta = 2 * Math.PI * Math.random();
+          const phi = Math.acos(2 * Math.random() - 1);
+
+          positions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+          positions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
+          positions[i * 3 + 2] = r * Math.cos(phi);
+        }
+
+        geometry.setAttribute(
+          "position",
+          new THREE.BufferAttribute(positions, 3),
+        );
+        const material = new THREE.PointsMaterial({
+          color: 0xffffff,
+          size: 2,
+          transparent: true,
+          opacity: 0.8,
+        });
+
+        const stars = new THREE.Points(geometry, material);
+        scene.add(stars);
+        return stars;
+      }
+      const starMesh = createStarfield();
+
+      // --- 2. 彗星本体（核） ---
+      const ball = new THREE.Mesh(
+        new THREE.SphereGeometry(15, 32, 32),
+        new THREE.MeshBasicMaterial({ color: 0xffffff }),
+      );
+      scene.add(ball);
+
+      // --- 3. パーティクル管理 ---
+      const particles = [];
+      const pGeo = new THREE.SphereGeometry(1, 4, 4);
+
+      function createParticle(x, y, z, isExplosion = false) {
+        const hue = Math.random();
+        const pMat = new THREE.MeshBasicMaterial({
+          color: new THREE.Color().setHSL(hue, 1.0, 0.6),
+          transparent: true,
+          blending: THREE.AdditiveBlending,
+        });
+        const p = new THREE.Mesh(pGeo, pMat);
+        p.position.set(x, y, z);
+        const force = isExplosion ? 15 : 4;
+        const vx = (Math.random() - 0.5) * force;
+        const vy = (Math.random() - 0.5) * force;
+        const vz = (Math.random() - 0.5) * force;
+        const life = isExplosion
+          ? 1.0 + Math.random()
+          : 0.6 + Math.random() * 0.4;
+        return { mesh: p, vx, vy, vz, life, initialLife: life };
+      }
+
+      // --- 4. マウス操作 ---
+      const targetPos = new THREE.Vector3();
+      window.addEventListener("mousemove", (e) => {
+        const v = new THREE.Vector3(
+          (e.clientX / width) * 2 - 1,
+          -(e.clientY / height) * 2 + 1,
+          0.5,
+        ).unproject(camera);
+        targetPos
+          .copy(camera.position)
+          .add(v.sub(camera.position).normalize().multiplyScalar(600));
+      });
+      window.addEventListener("mousedown", () => {
+        for (let i = 0; i < 100; i++) {
+          const p = createParticle(
+            ball.position.x,
+            ball.position.y,
+            ball.position.z,
+            true,
+          );
+          scene.add(p.mesh);
+          particles.push(p);
+        }
+      });
+
+      // --- 5. アニメーション ---
+      renderer.setAnimationLoop(() => {
+        ball.position.lerp(targetPos, 0.08);
+
+        // 星空をゆっくり回転させて宇宙の広がりを出す
+        starMesh.rotation.y += 0.0005;
+
+        for (let i = 0; i < 5; i++) {
+          const p = createParticle(
+            ball.position.x,
+            ball.position.y,
+            ball.position.z,
+          );
+          scene.add(p.mesh);
+          particles.push(p);
+        }
+
+        for (let i = particles.length - 1; i >= 0; i--) {
+          const p = particles[i];
+          p.life -= 0.015;
+          p.vy -= 0.03;
+          p.mesh.position.x += p.vx;
+          p.mesh.position.y += p.vy;
+          p.mesh.position.z += p.vz;
+          p.mesh.material.opacity = p.life / p.initialLife;
+          const s = p.life * 3;
+          p.mesh.scale.set(s, s, s);
+          if (p.life <= 0) {
+            scene.remove(p.mesh);
+            p.mesh.geometry.dispose();
+            p.mesh.material.dispose();
+            particles.splice(i, 1);
+          }
+        }
+        renderer.render(scene, camera);
+      });
+
+      window.addEventListener("resize", () => {
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+      });
+    </script>
+  </head>
+  <body
+    style="margin: 0; overflow: hidden; background: #000; cursor: crosshair"
+  >
+    <canvas id="myCanvas"></canvas>
+  </body>
+</html>
